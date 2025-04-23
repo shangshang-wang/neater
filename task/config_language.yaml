@@ -1,0 +1,49 @@
+# @package _global_
+
+# --- JAX/Seed ---
+jax:
+  PRNGKey: 42
+
+# --- Dataset ---
+dataset:
+  dataset_type: "language" # New type
+  text_file: "task/sample_data.txt" # PATH TO YOUR TEXT FILE
+  context_window: 10        # Number of words for context
+  embedding_dim: 128        # Dimension for word embeddings
+  vocab_size: -1           # Will be determined dynamically
+  test_split: 0.1          # Fraction for test set
+
+# --- Network ---
+# Input size will be context_window * embedding_dim
+# Output size will be vocab_size
+network:
+  num_layers: [64] # Initial hidden layer sizes for the Dense part
+  num_inputs: -1     # Will be set dynamically (context_window * embedding_dim)
+  num_output: -1     # Will be set dynamically (vocab_size)
+
+# --- Training ---
+training:
+  num_epochs: 10
+  batch_size: 32
+  lr: 0.01
+  generations: 100
+
+# --- NEAT ---
+neat:
+  add_layer: 0.1
+  add_node: 0.1
+  remove_node: 0.01
+  remove_layer: 0.01
+  mutate_activation: 0.05
+
+# --- Utils ---
+utils:
+  draw_graph: true
+
+# --- Hydra ---
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

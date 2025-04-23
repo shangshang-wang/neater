@@ -1,0 +1,31 @@
+neat:
+  add_node: 0.9
+  add_layer: 0.1
+  remove_node: 0.4
+  remove_layer: 0.3
+  mutate_activation: 0.1
+
+logs:
+  log_dir: './logs'
+
+jax:
+  PRNGKey: 30
+
+training:
+  num_epochs: 100
+  generations: 20
+  visualize_epochs: False
+  batch_size: 32
+  lr: 0.1
+
+network:
+  num_output: 3
+  num_layers: [1]
+  num_inputs: 4 
+
+dataset:
+  dataset_type: "iris"
+
+utils:
+  draw_graph: True
+  

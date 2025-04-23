@@ -1,0 +1,36 @@
+# Hydra Configuration for SlimeVolley NEAT+Backprop RL
+
+# Environment Settings
+env:
+  name: SlimeVolley-v0
+
+# JAX Settings
+jax:
+  PRNGKey: 42
+
+# Network Architecture (Initial) - num_inputs/num_output will be set dynamically
+network:
+  num_inputs: 12      # SlimeVolley observation space size (placeholder, set dynamically)
+  num_output: 8       # SlimeVolley action space size (Discrete(8), placeholder, set dynamically)
+  num_layers: [16]    # Initial hidden layer sizes (e.g., one hidden layer with 16 nodes)
+
+# Training Settings
+training:
+  lr: 0.001             # Learning rate (Adam often uses smaller LRs)
+  generations: 1000      # Total number of NEAT generations
+  episodes_per_generation: 100 # Number of episodes to run for experience collection
+  gamma: 0.99           # Discount factor for rewards
+  # entropy_coeff: 0.01  # Optional: Entropy bonus coefficient (uncomment if used in loss)
+
+# NEAT Mutation Probabilities
+neat:
+  add_layer: 0.05
+  add_node: 0.1
+  remove_node: 0.05
+  remove_layer: 0.02
+  mutate_activation: 0.1
+
+# Utility Settings
+utils:
+  draw_graph: true        # Whether to generate network graphs
+  draw_graph_freq: 100      # Generate graph every N generations
