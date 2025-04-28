@@ -8,97 +8,78 @@ from functools import partial
 import random
 import math
 import time
-import copy # For deep copying genomes
+import copy
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import networkx as nx # For topological sort
+import networkx as nx
 from sklearn.datasets import make_gaussian_quantiles
 
 
-# --- Configuration ---
-# Default parameters inspired by neat-python config and previous discussions
 default_config = {
     'pop_size': 50,
     'num_inputs': 2,
     'num_outputs': 1,
-    'output_activation': 'sigmoid', # Activation for output nodes
-    # Initial connection types: 'direct' (all inputs to all outputs)
+    'output_activation': 'sigmoid',
     'initial_connection': 'direct',
     'feed_forward': True, # If True, prevent recurrent connections
 
-    # Attribute Initialization
     'weight_init_mean': 0.0, 'weight_init_stdev': 1.0,
     'weight_min_value': -5.0, 'weight_max_value': 5.0,
     'bias_init_mean': 0.0, 'bias_init_stdev': 1.0,
     'bias_min_value': -5.0, 'bias_max_value': 5.0,
-    'response_init_mean': 1.0, 'response_init_stdev': 0.1, # Small stdev for response
+    'response_init_mean': 1.0, 'response_init_stdev': 0.1,
     'response_min_value': 0.1, 'response_max_value': 5.0,
 
-    # Mutation Probabilities
     'node_add_prob': 0.05,
-    'conn_add_prob': 0.1, # May need tuning
-    'conn_delete_prob': 0.05, # Not implemented yet
-    'node_delete_prob': 0.05, # Not implemented yet
+    'conn_add_prob': 0.1,
+    'conn_delete_prob': 0.05,
+    'node_delete_prob': 0.05,
 
-    # Attribute Mutation Rates & Powers
     'bias_mutate_rate': 0.7,
-    'bias_replace_rate': 0.1, # Chance to replace bias with new random value
+    'bias_replace_rate': 0.1,
     'bias_mutate_power': 0.5,
     'response_mutate_rate': 0.7,
     'response_replace_rate': 0.1,
     'response_mutate_power': 0.5,
-    'weight_mutate_rate': 0.8, # Might be high for BackpropNEAT? Tune this.
+    'weight_mutate_rate': 0.8,
     'weight_replace_rate': 0.1,
-    'weight_mutate_power': 0.5, # Power of gaussian noise for mutation
-    'enabled_mutate_rate': 0.05, # Chance to enable/disable connection
+    'weight_mutate_power': 0.5,
+    'enabled_mutate_rate': 0.05,
 
-    # Activation Function Mutation (for hidden nodes)
     'activation_default': 'relu',
-    'activation_options': ['relu', 'sigmoid', 'tanh', 'identity', 'sin', 'gauss', 'abs', 'square'], # JAX compatible subset
+    'activation_options': ['relu', 'sigmoid', 'tanh', 'identity', 'sin', 'gauss', 'abs', 'square'],
     'activation_mutate_rate': 0.1,
 
-    # Speciation (Parameters needed if implemented)
     'compatibility_threshold': 3.0,
     'compatibility_disjoint_coefficient': 1.0,
-    'compatibility_weight_coefficient': 0.5, # Coeff for weight/bias differences
+    'compatibility_weight_coefficient': 0.5,
 
-    # Reproduction (Parameters needed if implemented)
-    'elitism': 2, # Number of best individuals to carry over directly
-    'survival_threshold': 0.2, # Fraction of species allowed to reproduce
+    'elitism': 2,
+    'survival_threshold': 0.2,
 
-    # Stagnation (Parameters needed if implemented)
-    # 'max_stagnation': 15,
-    # 'species_fitness_func': 'max',
-    # 'species_elitism': 0
-
-    # Backprop Training Parameters (per evaluation)
     'bp_learning_rate': 0.01,
     'bp_batch_size': 32,
-    'bp_epochs': 50, # Number of epochs to train weights during evaluation
-    'complexity_penalty': 0.001 # Penalty per node/connection in fitness
+    'bp_epochs': 50,
+    'complexity_penalty': 0.001
 }
 
-
-# --- Activation Functions ---
-# Map activation names to JAX functions
 activation_functions = {
     'relu': jax.nn.relu,
     'sigmoid': jax.nn.sigmoid,
     'tanh': jnp.tanh,
     'identity': lambda x: x,
     'sin': jnp.sin,
-    'cos': jnp.cos, # Added cos
+    'cos': jnp.cos,
     'gauss': lambda x: jnp.exp(-jnp.multiply(x, x) / 2.0),
     'abs': jnp.abs,
     'square': jnp.square,
-    'cube': lambda x: jnp.power(x, 3), # Added cube
-    'clamped': lambda x: jnp.clip(x, -1.0, 1.0), # Added clamped
-    'log': lambda x: jnp.log(jnp.maximum(x, 1e-7)), # Added log
-    'exp': lambda x: jnp.exp(jnp.clip(x, -60.0, 60.0)), # Added exp
-    'hat': lambda x: jnp.maximum(0.0, 1.0 - jnp.abs(x)), # Added hat
+    'cube': lambda x: jnp.power(x, 3),
+    'clamped': lambda x: jnp.clip(x, -1.0, 1.0),
+    'log': lambda x: jnp.log(jnp.maximum(x, 1e-7)),
+    'exp': lambda x: jnp.exp(jnp.clip(x, -60.0, 60.0)),
+    'hat': lambda x: jnp.maximum(0.0, 1.0 - jnp.abs(x)),
 }
 
-# --- NEAT Gene Classes ---
 
 class NodeGene:
     # Types: 0=input, 1=output, 2=hidden
@@ -117,26 +98,24 @@ class NodeGene:
         return NodeGene(self.id, self.type, self.bias, self.response, self.activation)
 
     def mutate(self, config):
-        # Mutate Bias
         if random.random() < config.get('bias_replace_rate', 0.1):
             self.bias = random.gauss(config.get('bias_init_mean', 0.0), config.get('bias_init_stdev', 1.0))
         elif random.random() < config.get('bias_mutate_rate', 0.7):
             self.bias += random.gauss(0, config.get('bias_mutate_power', 0.5))
         self.bias = np.clip(self.bias, config.get('bias_min_value', -5.0), config.get('bias_max_value', 5.0))
 
-        # Mutate Response
         if random.random() < config.get('response_replace_rate', 0.1):
             self.response = random.gauss(config.get('response_init_mean', 1.0), config.get('response_init_stdev', 0.1))
         elif random.random() < config.get('response_mutate_rate', 0.7):
             self.response += random.gauss(0, config.get('response_mutate_power', 0.5))
         self.response = np.clip(self.response, config.get('response_min_value', 0.1), config.get('response_max_value', 5.0))
 
-        # Mutate Activation (only for hidden nodes)
         if self.type == 2 and random.random() < config.get('activation_mutate_rate', 0.1):
              available_activations = config.get('activation_options', ['relu', 'sigmoid', 'tanh'])
              valid_options = [act for act in available_activations if act in activation_functions]
              if valid_options:
                  self.activation = random.choice(valid_options)
+
 
 class ConnectionGene:
     def __init__(self, in_node, out_node, weight, enabled, innovation):
@@ -144,7 +123,7 @@ class ConnectionGene:
         self.out_node = out_node
         self.weight = float(weight)
         self.enabled = enabled
-        self.innovation = innovation # Historical marker
+        self.innovation = innovation
 
     def __repr__(self):
         return f"Conn({self.in_node}->{self.out_node}, w={self.weight:.2f}, {'E' if self.enabled else 'D'}, I:{self.innovation})"
@@ -153,7 +132,6 @@ class ConnectionGene:
         return ConnectionGene(self.in_node, self.out_node, self.weight, self.enabled, self.innovation)
 
     def mutate(self, config):
-        # Mutate Weight
         if random.random() < config.get('weight_replace_rate', 0.1):
             self.weight = random.gauss(config.get('weight_init_mean', 0.0), config.get('weight_init_stdev', 1.0))
         elif random.random() < config.get('weight_mutate_rate', 0.8):
@@ -161,32 +139,26 @@ class ConnectionGene:
         self.weight = np.clip(self.weight, config.get('weight_min_value', -5.0), config.get('weight_max_value', 5.0))
 
 
-# --- NEAT Genome Class ---
-
 class Genome:
     def __init__(self, key, num_inputs, num_outputs, config):
-        self.key = key # Unique identifier (can be int or tuple)
-        self.nodes = {} # Dict: node_id -> NodeGene
-        self.connections = {} # Dict: (in_node_id, out_node_id) -> ConnectionGene
+        self.key = key
+        self.nodes = {}
+        self.connections = {}
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
         self.fitness = -float('inf')
-        self.node_id_counter = 0 # Simple counter for new node IDs
-        self.config = config # Store parameters
-
-        # Innovation tracking should ideally be global, managed by Population/Reproduction
-        # We'll pass these dicts around for simplicity in this standalone example
+        self.node_id_counter = 0
+        self.config = config
         self.global_innovation_number = 0
-        self.innovation_history = {} # Key: (in_node_id, out_node_id), Value: innovation_number
+        self.innovation_history = {}
 
-        # --- Initial Structure ---
         input_node_ids = []
         for i in range(num_inputs):
             node_id = -(i + 1)
             bias = random.gauss(self.config.get('bias_init_mean', 0.0), self.config.get('bias_init_stdev', 1.0))
             response = random.gauss(self.config.get('response_init_mean', 1.0), self.config.get('response_init_stdev', 0.1))
             self.nodes[node_id] = NodeGene(node_id, type=0, bias=bias, response=response, activation='identity')
-            self.node_id_counter = min(self.node_id_counter, node_id) # Track lowest ID used
+            self.node_id_counter = min(self.node_id_counter, node_id)
             input_node_ids.append(node_id)
 
         output_node_ids = []
@@ -196,13 +168,11 @@ class Genome:
             response = random.gauss(self.config.get('response_init_mean', 1.0), self.config.get('response_init_stdev', 0.1))
             out_act = self.config.get('output_activation', 'sigmoid')
             self.nodes[node_id] = NodeGene(node_id, type=1, bias=bias, response=response, activation=out_act)
-            self.node_id_counter = max(self.node_id_counter, node_id) # Track highest ID used
+            self.node_id_counter = max(self.node_id_counter, node_id)
             output_node_ids.append(node_id)
 
-        # Correct node_id_counter to be the next available positive ID
         self.node_id_counter = max(0, self.node_id_counter) + 1
 
-        # Initial connectivity
         init_conn_type = self.config.get('initial_connection', 'direct')
         if init_conn_type == 'direct':
             for i_id in input_node_ids:
@@ -215,14 +185,11 @@ class Genome:
 
 
     def get_new_node_id(self):
-        """Gets the next available node ID."""
         new_id = self.node_id_counter
         self.node_id_counter += 1
         return new_id
 
     def get_innovation_number(self, in_node_id, out_node_id):
-        """Gets or creates an innovation number for a connection."""
-        # Uses internal state for simplicity; should be global in full NEAT
         key = (in_node_id, out_node_id)
         if key in self.innovation_history:
             return self.innovation_history[key]
@@ -232,13 +199,11 @@ class Genome:
             return self.global_innovation_number
 
     def _add_node(self, node_id, type, bias=0.0, response=1.0, activation='relu'):
-        # Helper to add node if it doesn't exist
         if node_id not in self.nodes:
              self.nodes[node_id] = NodeGene(node_id, type, bias, response, activation)
         return self.nodes[node_id]
 
     def _add_connection(self, in_node_id, out_node_id, weight, enabled):
-        # Helper to add connection if it doesn't exist
         key = (in_node_id, out_node_id)
         innovation_num = self.get_innovation_number(in_node_id, out_node_id)
         if key not in self.connections:
@@ -246,32 +211,21 @@ class Genome:
         return self.connections[key]
 
     def mutate(self):
-        """Applies various mutations based on probabilities in config."""
         if random.random() < self.config.get('node_add_prob', 0.05):
             self.mutate_add_node()
 
         if random.random() < self.config.get('conn_add_prob', 0.1):
             self.mutate_add_connection()
 
-        # --- Attribute Mutations ---
         for node in self.nodes.values():
-            if node.type != 0: # Don't mutate input node attributes
+            if node.type != 0:
                 node.mutate(self.config)
         for conn in self.connections.values():
              conn.mutate(self.config)
-             # Mutate enabled status
              if random.random() < self.config.get('enabled_mutate_rate', 0.05):
-                  # Don't disable connections to output nodes if it's the only path? More complex logic needed.
-                  # Simple toggle for now:
                   conn.enabled = not conn.enabled
 
-        # --- Delete mutations (optional, add complexity) ---
-        # if random.random() < self.config.get('conn_delete_prob', 0.0): self.mutate_delete_connection()
-        # if random.random() < self.config.get('node_delete_prob', 0.0): self.mutate_delete_node()
-
-
     def mutate_add_node(self):
-        """Splits an existing connection by adding a new node."""
         if not self.connections: return
 
         enabled_connections = {k: v for k, v in self.connections.items() if v.enabled}
@@ -281,7 +235,7 @@ class Genome:
         in_node_id, out_node_id = conn_key
         old_conn = self.connections[conn_key]
 
-        old_conn.enabled = False # Disable old connection
+        old_conn.enabled = False
 
         new_node_id = self.get_new_node_id()
         hidden_act = self.config.get('activation_default', 'relu')
@@ -289,10 +243,10 @@ class Genome:
         response = random.gauss(self.config.get('response_init_mean', 1.0), self.config.get('response_init_stdev', 0.1))
         self._add_node(new_node_id, type=2, bias=bias, response=response, activation=hidden_act)
 
-        self._add_connection(in_node_id, new_node_id, 1.0, enabled=True) # Weight 1.0 into new node
-        self._add_connection(new_node_id, out_node_id, old_conn.weight, enabled=True) # Old weight out of new node
+        self._add_connection(in_node_id, new_node_id, 1.0, enabled=True)
+        self._add_connection(new_node_id, out_node_id, old_conn.weight, enabled=True)
 
-    def mutate_add_connection(self): # Uses the robust cycle check
+    def mutate_add_connection(self):
         possible_starts = [n for n in self.nodes.values()]
         possible_ends = [n for n in self.nodes.values() if n.type != 'input']
 
@@ -300,53 +254,48 @@ class Genome:
 
         is_feedforward = self.config.get('feed_forward', True)
 
-        # *** ADD THIS LINE ***
-        attempts = 20 # Number of tries to find a valid connection
-        # *********************
-
-        for _ in range(attempts): # Now 'attempts' is defined before being used
+        attempts = 20
+        for _ in range(attempts):
             start_node = random.choice(possible_starts)
             end_node = random.choice(possible_ends)
             start_node_id = start_node.id
             end_node_id = end_node.id
             key_conn = (start_node_id, end_node_id)
 
-            # --- Basic Validity Checks ---
-            if key_conn in self.connections: continue
-            if start_node_id == end_node_id: continue
-            if end_node.type == 'input': continue
+            if key_conn in self.connections:
+                continue
+            if start_node_id == end_node_id:
+                continue
+            if end_node.type == 'input':
+                continue
 
-            # --- Cycle Check (if feed_forward is True) ---
             if is_feedforward:
                  graph_check = nx.DiGraph()
                  graph_check.add_nodes_from(self.nodes.keys())
                  existing_enabled_edges = [(c.in_node, c.out_node) for c in self.connections.values() if c.enabled]
                  graph_check.add_edges_from(existing_enabled_edges)
-                 if start_node_id in graph_check and end_node_id in graph_check: graph_check.add_edge(start_node_id, end_node_id)
+                 if start_node_id in graph_check and end_node_id in graph_check:
+                     graph_check.add_edge(start_node_id, end_node_id)
                  else:
                      print(f"Warning: Node missing during cycle check setup ({start_node_id} or {end_node_id})")
                      continue
                  if not nx.is_directed_acyclic_graph(graph_check):
                      continue
 
-            # --- If all checks passed, add the connection ---
-            # NOTE: This mutation uses python's random, not a JAX key currently
             mean = self.config.get('weight_init_mean', 0.0)
             stdev = self.config.get('weight_init_stdev', 1.0)
             weight = random.gauss(mean, stdev)
             weight = np.clip(weight, self.config.get('weight_min_value', -5.0), self.config.get('weight_max_value', 5.0))
             self._add_connection(start_node_id, end_node_id, weight, enabled=True)
-            return # Success
+            return
 
     @staticmethod
     def crossover(parent1, parent2, child_key, innovation_tracker):
-        """Performs crossover between two parent genomes."""
         if parent1.fitness < parent2.fitness:
-            parent1, parent2 = parent2, parent1 # Ensure parent1 is fitter
+            parent1, parent2 = parent2, parent1
 
-        config = parent1.config # Inherit config from fitter parent
+        config = parent1.config
         child = Genome(child_key, config['num_inputs'], config['num_outputs'], config)
-        # Pass global innovation state - important!
         child.global_innovation_number = innovation_tracker['global_innovation_number']
         child.innovation_history = innovation_tracker['innovation_history']
         child.node_id_counter = max(parent1.node_id_counter, parent2.node_id_counter)
@@ -354,11 +303,9 @@ class Genome:
         child.nodes = {}
         child.connections = {}
 
-        # Inherit all nodes from the fitter parent
         for node_id, node1 in parent1.nodes.items():
             child.nodes[node_id] = node1.copy()
 
-        # Inherit connections based on innovation numbers
         conn1_by_innov = {c.innovation: c for c in parent1.connections.values()}
         conn2_by_innov = {c.innovation: c for c in parent2.connections.values()}
         all_innovations = set(conn1_by_innov.keys()) | set(conn2_by_innov.keys())
@@ -370,140 +317,111 @@ class Genome:
             chosen_conn_copy = None
             inherit_enabled = True
 
-            if gene1 and gene2: # Matching genes
+            if gene1 and gene2:
                 chosen_gene = random.choice([gene1, gene2])
                 chosen_conn_copy = chosen_gene.copy()
-                # Handle disabled gene inheritance (NEAT convention)
                 if not gene1.enabled or not gene2.enabled:
                     inherit_enabled = (random.random() > 0.75)
-
-            elif gene1: # Disjoint/Excess gene from parent1 (fitter)
+            elif gene1:
                 chosen_conn_copy = gene1.copy()
                 inherit_enabled = gene1.enabled
-            elif gene2: # Disjoint/Excess gene from parent2 (less fit)
+            elif gene2:
                  chosen_conn_copy = gene2.copy()
                  inherit_enabled = gene2.enabled
 
             if chosen_conn_copy:
-                 # Ensure nodes for the connection exist in the child (should from parent1)
-                 if chosen_conn_copy.in_node not in child.nodes:
-                      # This might happen if node was deleted or structure is complex; copy from parent2 if possible
-                      if chosen_conn_copy.in_node in parent2.nodes:
-                           child.nodes[chosen_conn_copy.in_node] = parent2.nodes[chosen_conn_copy.in_node].copy()
-                      else: continue # Cannot add connection if node is missing
-                 if chosen_conn_copy.out_node not in child.nodes:
-                      if chosen_conn_copy.out_node in parent2.nodes:
-                           child.nodes[chosen_conn_copy.out_node] = parent2.nodes[chosen_conn_copy.out_node].copy()
-                      else: continue
+                if chosen_conn_copy.in_node not in child.nodes:
+                    if chosen_conn_copy.in_node in parent2.nodes:
+                        child.nodes[chosen_conn_copy.in_node] = parent2.nodes[chosen_conn_copy.in_node].copy()
+                    else:
+                        continue
+                if chosen_conn_copy.out_node not in child.nodes:
+                    if chosen_conn_copy.out_node in parent2.nodes:
+                        child.nodes[chosen_conn_copy.out_node] = parent2.nodes[chosen_conn_copy.out_node].copy()
+                    else:
+                        continue
 
-                 chosen_conn_copy.enabled = inherit_enabled # Set enabled status
-                 child.connections[(chosen_conn_copy.in_node, chosen_conn_copy.out_node)] = chosen_conn_copy
+                chosen_conn_copy.enabled = inherit_enabled
+                child.connections[(chosen_conn_copy.in_node, chosen_conn_copy.out_node)] = chosen_conn_copy
 
-        # Update the global innovation state from child (which inherited/updated it)
         innovation_tracker['global_innovation_number'] = child.global_innovation_number
         innovation_tracker['innovation_history'] = child.innovation_history
 
         return child
 
 
-# --- Genome to JAX Function Conversion ---
-
 def genome_to_forward_fn(genome: Genome):
-    """
-    Creates a JAX-compatible forward pass function from the enhanced NEAT genome.
-    Handles bias, response, and per-node activations using topological sort.
-    """
     nodes_list = list(genome.nodes.values())
     connections_list = [c for c in genome.connections.values() if c.enabled]
 
-    # --- Extract initial parameters ---
     initial_params = {
         'weights': {(c.in_node, c.out_node): c.weight for c in connections_list},
-        'biases': {n.id: n.bias for n in nodes_list if n.type != 0}, # Input nodes don't have trainable bias here
+        'biases': {n.id: n.bias for n in nodes_list if n.type != 0},
         'responses': {n.id: n.response for n in nodes_list if n.type != 0}
     }
 
-    # --- Build Graph for Topological Sort ---
     graph = nx.DiGraph()
     node_ids = [n.id for n in nodes_list]
     graph.add_nodes_from(node_ids)
     edges = [(c.in_node, c.out_node) for c in connections_list]
     graph.add_edges_from(edges)
 
-    # --- Check for graph validity and get topological sort ---
     if not nx.is_directed_acyclic_graph(graph):
-        # Handle recurrent connections if config allows, otherwise raise error
         if genome.config.get('feed_forward', True):
              print(f"Warning: Genome {genome.key} has cycles but config requires feedforward. Evaluation might fail.")
-             # Fallback: try to proceed, JAX might handle it or error later
-        # else: # Implement recurrent network evaluation if needed (more complex)
-        #     raise NotImplementedError("Recurrent network evaluation not implemented")
 
     try:
         eval_order = list(nx.topological_sort(graph))
-    except nx.NetworkXUnfeasible: # Handles graphs with no clear input->output path
+    except nx.NetworkXUnfeasible:
          print(f"Warning: Genome {genome.key} graph may not be fully connected or has issues. Eval may fail.")
-         # Use a basic order as fallback (inputs -> hidden -> outputs)
          input_nodes = [n.id for n in nodes_list if n.type == 0]
          output_nodes = [n.id for n in nodes_list if n.type == 1]
          hidden_nodes = [n.id for n in nodes_list if n.type == 2]
          eval_order = input_nodes + hidden_nodes + output_nodes
 
-
-    # --- Define the JAX forward pass function ---
     input_node_ids = frozenset(n.id for n in nodes_list if n.type == 0)
     output_node_ids = frozenset(n.id for n in nodes_list if n.type == 1)
     node_activation_map = {n.id: activation_functions.get(n.activation, activation_functions['identity'])
                            for n in nodes_list}
-    # Pre-build incoming connection map for efficiency inside JAX function
     incoming_connections = defaultdict(list)
     for c in connections_list:
         incoming_connections[c.out_node].append(c.in_node)
 
     def forward_pass(params, inputs):
-        if inputs.ndim == 1: inputs = inputs.reshape(1, -1) # Ensure batch dimension
+        if inputs.ndim == 1: inputs = inputs.reshape(1, -1)
         batch_size = inputs.shape[0]
 
         node_values = {node_id: jnp.zeros(batch_size) for node_id in node_ids}
 
-        # Set input node values
         input_idx = 0
-        for node_id in sorted(list(input_node_ids)): # Ensure consistent order
+        for node_id in sorted(list(input_node_ids)):
             if input_idx < inputs.shape[1]:
                 node_values[node_id] = inputs[:, input_idx]
                 input_idx += 1
 
-        # Process nodes in topological order
         for node_id in eval_order:
             if node_id in input_node_ids:
-                continue # Skip input nodes
+                continue
 
-            # Get parameters for this node
-            bias = params['biases'].get(node_id, 0.0) # Default bias if somehow missing
-            response = params['responses'].get(node_id, 1.0) # Default response
+            bias = params['biases'].get(node_id, 0.0)
+            response = params['responses'].get(node_id, 1.0)
             activation_fn = node_activation_map[node_id]
 
-            # Calculate weighted sum of inputs
             node_sum = jnp.zeros(batch_size)
             for in_node_id in incoming_connections[node_id]:
-                 weight = params['weights'].get((in_node_id, node_id), 0.0) # Default weight
+                 weight = params['weights'].get((in_node_id, node_id), 0.0)
                  node_sum += node_values[in_node_id] * weight
 
-            # Apply activation function: act(bias + response * sum)
             node_values[node_id] = activation_fn(bias + response * node_sum)
 
-        # Collect outputs
         outputs = jnp.stack([node_values[out_id] for out_id in sorted(list(output_node_ids))], axis=-1)
-        return outputs.reshape(batch_size, len(output_node_ids)) # Ensure correct output shape
+        return outputs.reshape(batch_size, len(output_node_ids))
 
     return forward_pass, initial_params
 
 
-# --- JAX Training Loop ---
-
 def binary_cross_entropy_loss(logits, labels):
-    """Computes BCE loss. Assumes logits are probabilities (e.g., sigmoid output)."""
-    probs = jnp.clip(logits, 1e-7, 1.0 - 1e-7) # Ensure numerical stability
+    probs = jnp.clip(logits, 1e-7, 1.0 - 1e-7)
     return -jnp.mean(labels * jnp.log(probs) + (1 - labels) * jnp.log(1 - probs))
 
 def calculate_accuracy(apply_fn, params, X, y):
@@ -511,10 +429,8 @@ def calculate_accuracy(apply_fn, params, X, y):
     y_pred = (y_pred_prob > 0.5).astype(jnp.int32)
     return jnp.mean(y_pred == y)
 
-# Note: Changed static args - apply_fn (0) and optimizer (3) are static
 @partial(jax.jit, static_argnums=(0, 3))
 def train_step(apply_fn, params, opt_state, optimizer, X_batch, y_batch):
-    """Performs a single gradient update step."""
     def loss_fn_for_grad(p):
         y_pred_logits = apply_fn(p, X_batch)
         loss = binary_cross_entropy_loss(y_pred_logits, y_batch)
@@ -526,86 +442,49 @@ def train_step(apply_fn, params, opt_state, optimizer, X_batch, y_batch):
     return params, opt_state, loss
 
 def evaluate_genome_fitness(key, genome: Genome, X, y):
-    """
-    Evaluates a genome's fitness by training its network using backprop,
-    but ONLY IF the network is acyclic. Penalizes cyclic graphs.
-    """
-    config = genome.config # Get config from genome
+    config = genome.config
     complexity_penalty_rate = config.get('complexity_penalty', 0.001)
 
-    try:
-        # --- Check for Cycles Explicitly Before Training ---
-        graph = nx.DiGraph()
-        nodes_list = list(genome.nodes.keys())
-        # Consider only enabled connections for cycle check
-        connections_list = [c for c in genome.connections.values() if c.enabled]
-        edges = [(c.in_node, c.out_node) for c in connections_list]
+    graph = nx.DiGraph()
+    nodes_list = list(genome.nodes.keys())
+    connections_list = [c for c in genome.connections.values() if c.enabled]
+    edges = [(c.in_node, c.out_node) for c in connections_list]
 
-        graph.add_nodes_from(nodes_list)
-        graph.add_edges_from(edges)
+    graph.add_nodes_from(nodes_list)
+    graph.add_edges_from(edges)
 
-        # If the final enabled graph is NOT acyclic, penalize heavily and SKIP training
-        if not nx.is_directed_acyclic_graph(graph):
-            # print(f"Genome {genome.key} is cyclic! Assigning zero fitness.") # Optional Debug
-            return 0.0 # Assign very low/zero fitness to cyclic genomes
-        # --- End Cycle Check ---
+    if not nx.is_directed_acyclic_graph(graph):
+        return 0.0
 
+    apply_fn, initial_params = genome_to_forward_fn(genome)
 
-        # --- Proceed with evaluation ONLY if acyclic ---
-        # Create the JAX function for the network's structure
-        apply_fn, initial_params = genome_to_forward_fn(genome)
+    has_params = any(bool(p_dict) for p_dict in initial_params.values() if isinstance(p_dict, dict)) or any(initial_params.values())
+    if not has_params:
+         return 0.0
 
-        # Check for trainable parameters (weights, biases, etc.)
-        # A more robust check might be needed depending on exact param structure
-        has_params = any(bool(p_dict) for p_dict in initial_params.values() if isinstance(p_dict, dict)) \
-                    or any(initial_params.values()) # Basic check if not nested dicts
+    key, train_key = jax.random.split(key)
+    trained_params, final_loss, final_accuracy = train_network(
+        train_key, apply_fn, initial_params, X, y, config
+    )
 
-        if not has_params:
-             # print(f"Genome {genome.key} has no trainable parameters. Fitness = 0")
-             return 0.0
-
-        # *** Call train_network (The Backprop part) ***
-        # Ensure train_network uses config for its hyperparameters
-        key, train_key = jax.random.split(key)
-        trained_params, final_loss, final_accuracy = train_network(
-            train_key, apply_fn, initial_params, X, y, config # Pass config
-        )
-
-        # Fitness = Accuracy (after training) minus complexity penalty
-        num_nodes = len(genome.nodes)
-        # Use the connections_list already filtered for enabled connections
-        num_connections = len(connections_list)
-        penalty = complexity_penalty_rate * (num_nodes + num_connections)
-
-        # Fitness calculation remains the same as before for acyclic genomes
-        fitness = final_accuracy - penalty
-
-        return float(max(0.0, fitness)) # Ensure non-negative float
-
-    except Exception as e:
-        # Catch errors during evaluation (e.g., JAX errors, graph errors)
-        import traceback
-        print(f"Error evaluating genome {genome.key}: {e}\n{traceback.format_exc()}")
-        return 0.0 # Penalize errors heavily
+    num_nodes = len(genome.nodes)
+    num_connections = len(connections_list)
+    penalty = complexity_penalty_rate * (num_nodes + num_connections)
+    fitness = final_accuracy - penalty
+    return float(max(0.0, fitness))
 
 
-# --- Ensure train_network accepts and uses config ---
-# Make sure your train_network function definition looks like this:
 def train_network(key, apply_fn, initial_params, X_train, y_train, config):
-    """Trains the network weights using JAX and Optax. Uses config."""
-    # Extract parameters from config or use defaults
     learning_rate = config.get('bp_learning_rate', 0.01)
     batch_size = config.get('bp_batch_size', 32)
-    epochs = config.get('bp_epochs', 50) # Use epochs from config
+    epochs = config.get('bp_epochs', 50)
 
     optimizer = optax.adam(learning_rate)
     params = initial_params
 
-    # Handle potentially empty parameter structures robustly before init
-    if not any(bool(p_dict) for p_dict in params.values() if isinstance(p_dict, dict)) \
-       and not any(params.values()): # Check if weights/biases/responses dicts are non-empty or if params itself is empty
+    if not any(bool(p_dict) for p_dict in params.values() if isinstance(p_dict, dict)) and not any(params.values()):
         print("Warning: Empty initial parameters, cannot train.")
-        return params, float('inf'), 0.0 # Return indicative values
+        return params, float('inf'), 0.0
 
     try:
         opt_state = optimizer.init(params)
@@ -616,7 +495,6 @@ def train_network(key, apply_fn, initial_params, X_train, y_train, config):
     num_train = X_train.shape[0]
     steps_per_epoch = math.ceil(num_train / batch_size)
 
-    # --- Training loop ---
     for epoch in range(epochs):
         key, subkey = jax.random.split(key)
         perms = jax.random.permutation(subkey, num_train)
@@ -625,22 +503,17 @@ def train_network(key, apply_fn, initial_params, X_train, y_train, config):
         epoch_loss = 0.0
         for step in range(steps_per_epoch):
             start_idx = step * batch_size
-            end_idx = start_idx + batch_size # Correct end index calculation
+            end_idx = start_idx + batch_size
             X_batch, y_batch = X_train_perm[start_idx:end_idx], y_train_perm[start_idx:end_idx]
             if X_batch.shape[0] == 0: continue
 
-            # Ensure train_step is defined correctly elsewhere
             params, opt_state, loss = train_step(apply_fn, params, opt_state, optimizer, X_batch, y_batch)
             epoch_loss += loss
-        # --- End Training Loop ---
 
-    # Final evaluation
     final_loss = binary_cross_entropy_loss(apply_fn(params, X_train), y_train)
     final_accuracy = calculate_accuracy(apply_fn, params, X_train, y_train)
     return params, final_loss, final_accuracy
 
-
-# --- Dataset Generation ---
 
 def get_xor_data(key, n_samples=200):
     rng = np.random.RandomState(key.tolist()[0])
@@ -661,91 +534,67 @@ def get_spiral_data(key, n_samples=200, noise=0.1):
     X = scaler.fit_transform(X)
     return jnp.array(X), jnp.array(y).reshape(-1, 1)
 
-# Requires learning multiple axis-aligned boundaries.
 def get_checkerboard_data(key, n_samples=400, grid_size=4, noise_std=0.1):
-    """Generates a 2D checkerboard pattern."""
-    # Use NumPy for generation logic
-    rng = np.random.RandomState(key.tolist()[0]) # Seed numpy rng
+    rng = np.random.RandomState(key.tolist()[0])
 
-    grid_range = 2.0 # Data ranges from -grid_range to +grid_range
+    grid_range = 2.0
     square_size = (2 * grid_range) / grid_size
 
     X = rng.uniform(-grid_range, grid_range, size=(n_samples, 2))
 
-    # Determine class based on which grid square the point is in
-    # Calculate grid indices (0 to grid_size-1)
     x_indices = np.floor((X[:, 0] + grid_range) / square_size)
     y_indices = np.floor((X[:, 1] + grid_range) / square_size)
-
-    # Ensure indices are within bounds
     x_indices = np.clip(x_indices, 0, grid_size - 1)
     y_indices = np.clip(y_indices, 0, grid_size - 1)
 
-    # Assign class based on whether the sum of indices is even or odd
     y = ((x_indices + y_indices) % 2).astype(int)
-
-    # Add Gaussian noise to positions *after* assigning labels
     X += rng.normal(scale=noise_std, size=X.shape)
 
-    # Standardize features
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
     return jnp.array(X, dtype=jnp.float32), jnp.array(y, dtype=jnp.float32).reshape(-1, 1)
 
-# Concentric Gaussian distributions. Can be hard if noise is high.
+
 def get_gaussian_quantiles_data(key, n_samples=400, n_classes=2, noise_std=0.5):
-    """Generates Gaussian quantiles."""
-    # Sklearn handles seeding internally via random_state
-    X, y = make_gaussian_quantiles(mean=None, # Centered at origin
-                                   cov=noise_std**2, # Covariance relates to noise spread
+    X, y = make_gaussian_quantiles(mean=None,
+                                   cov=noise_std**2,
                                    n_samples=n_samples,
                                    n_features=2,
                                    n_classes=n_classes,
                                    shuffle=True,
-                                   random_state=key.tolist()[0]) # Seed sklearn
+                                   random_state=key.tolist()[0])
 
-    # Standardize features
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
     return jnp.array(X, dtype=jnp.float32), jnp.array(y, dtype=jnp.float32).reshape(-1, 1)
 
-# A classic challenging non-linear problem.
 def get_interlocking_spirals_data(key, n_samples=400, noise=0.2, turns=1.5):
-    """Generates two interlocking spirals."""
-    rng = np.random.RandomState(key.tolist()[0]) # Seed numpy rng
+    rng = np.random.RandomState(key.tolist()[0])
     n = n_samples // 2
 
-    # Generate points for class 0
-    theta0 = np.sqrt(rng.rand(n)) * turns * (2*np.pi) # Non-linear spacing
-    r0 = theta0 / np.pi * 0.5 # Radius increases with angle
-    # Add noise
+    theta0 = np.sqrt(rng.rand(n)) * turns * (2*np.pi)
+    r0 = theta0 / np.pi * 0.5
     x0 = (r0 * np.cos(theta0) + rng.randn(n) * noise).reshape(n, 1)
     y0 = (r0 * np.sin(theta0) + rng.randn(n) * noise).reshape(n, 1)
 
-    # Generate points for class 1 (phase shifted)
     theta1 = np.sqrt(rng.rand(n)) * turns * (2*np.pi)
     r1 = theta1 / np.pi * 0.5
-    # Add noise
-    x1 = (-r1 * np.cos(theta1) + rng.randn(n) * noise).reshape(n, 1) # Negate position for interlock
+    x1 = (-r1 * np.cos(theta1) + rng.randn(n) * noise).reshape(n, 1)
     y1 = (-r1 * np.sin(theta1) + rng.randn(n) * noise).reshape(n, 1)
 
-    # Combine
     X = np.vstack((np.hstack((x0, y0)), np.hstack((x1, y1))))
     y = np.hstack((np.zeros(n), np.ones(n)))
 
-    # Shuffle
     perm = rng.permutation(n_samples)
     X, y = X[perm], y[perm]
 
-    # Standardize features
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
     return jnp.array(X, dtype=jnp.float32), jnp.array(y, dtype=jnp.float32).reshape(-1, 1)
 
-# --- Visualization Functions ---
 
 def plot_decision_boundary(apply_fn, params, X, y, title="Decision Boundary"):
     plt.figure(figsize=(8, 6))
@@ -782,7 +631,7 @@ def visualize_network(genome: Genome, title="Evolved Network Structure"):
     node_colors = []
     edge_labels = {}
 
-    pos = {} # Use multipartite layout for better layering
+    pos = {}
     input_nodes = sorted([n.id for n in genome.nodes.values() if n.type == 0])
     output_nodes = sorted([n.id for n in genome.nodes.values() if n.type == 1])
     hidden_nodes = sorted([n.id for n in genome.nodes.values() if n.type == 2])
@@ -792,16 +641,14 @@ def visualize_network(genome: Genome, title="Evolved Network Structure"):
     subset_map.update({node_id: 1 for node_id in hidden_nodes})
     subset_map.update({node_id: 2 for node_id in output_nodes})
 
-    # Calculate positions
     max_nodes_in_layer = max(len(input_nodes), len(hidden_nodes), len(output_nodes), 1)
     node_yspacing = 1.0 / max(1, max_nodes_in_layer -1) if max_nodes_in_layer > 1 else 0
-    layer_x = {0: 0.0, 1: 0.5, 2: 1.0} # X positions for layers
+    layer_x = {0: 0.0, 1: 0.5, 2: 1.0}
 
     layer_counters = defaultdict(int)
     for node_id in input_nodes + hidden_nodes + output_nodes:
         node = genome.nodes[node_id]
         G.add_node(node_id)
-        # Label includes ID, activation, bias, response
         node_labels[node_id] = f"{node_id}\n{node.activation[:3]}\nb={node.bias:.1f} r={node.response:.1f}"
 
         layer = subset_map[node_id]
@@ -813,36 +660,27 @@ def visualize_network(genome: Genome, title="Evolved Network Structure"):
         elif node.type == 1: node_colors.append('lightcoral')
         else: node_colors.append('lightgray')
 
-    # Add enabled connections as edges with weights
     edge_list = []
     for conn_key, conn in genome.connections.items():
         if conn.enabled:
             G.add_edge(conn.in_node, conn.out_node, weight=conn.weight)
-            edge_labels[conn_key] = f"{conn.weight:.2f}" # Label edges with weight
+            edge_labels[conn_key] = f"{conn.weight:.2f}"
 
-    # Draw the network
     nx.draw(G, pos, with_labels=True, labels=node_labels, node_color=node_colors,
             node_size=2500, font_size=8, font_weight='bold', arrowsize=15, edge_color='gray')
-    # Draw edge labels
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
 
     plt.title(title)
     plt.axis('off')
     plt.savefig(f"network_backprop.png")
 
-# --- Main Evolutionary Loop ---
 
-def run_neat_evolution(key, config, task_name='XOR', generations=100):
-    """Main BackpropNEAT loop with enhanced Genome."""
-
-    # --- Innovation state (should ideally be managed by Population class) ---
+def main(key, config, task_name='XOR', generations=100):
     innovation_tracker = {
         'global_innovation_number': 0,
         'innovation_history': {}
     }
-    # ---------------------------------------------------------------------
 
-    # Get data
     key, data_key = jax.random.split(key)
     if task_name == 'XOR': X, y = get_xor_data(data_key)
     elif task_name == 'Circles': X, y = get_circles_data(data_key)
@@ -856,22 +694,20 @@ def run_neat_evolution(key, config, task_name='XOR', generations=100):
     num_outputs = config['num_outputs']
     population_size = config['pop_size']
     elitism = config.get('elitism', 2)
-    survival_threshold = config.get('survival_threshold', 0.2) # Not used in this simple version
+    survival_threshold = config.get('survival_threshold', 0.2)
 
     print(f"Running BackpropNEAT for {task_name}...")
     print(f"Population: {population_size}, Generations: {generations}")
     print(f"Input shape: {X.shape}, Output shape: {y.shape}")
 
-    # Initialize Population
     population = []
     keys = jax.random.split(key, population_size)
     for i in range(population_size):
-        g = Genome(i, num_inputs, num_outputs, config) # Pass unique key (e.g., index i)
-        # Initialize innovation tracking from the first genome
+        g = Genome(i, num_inputs, num_outputs, config)
         if i == 0:
              innovation_tracker['global_innovation_number'] = g.global_innovation_number
              innovation_tracker['innovation_history'] = g.innovation_history
-        else: # Share innovation state
+        else:
              g.global_innovation_number = innovation_tracker['global_innovation_number']
              g.innovation_history = innovation_tracker['innovation_history']
         population.append(g)
@@ -879,22 +715,17 @@ def run_neat_evolution(key, config, task_name='XOR', generations=100):
     best_genome_overall = None
     best_fitness_overall = -float('inf')
 
-    # --- Evolution Loop ---
     for gen in range(generations):
         key, eval_key, repro_key = jax.random.split(key, 3)
 
-        # Evaluate Fitness
         fitness_scores = []
         evaluation_keys = jax.random.split(eval_key, population_size)
         for i, genome in enumerate(population):
             genome.fitness = evaluate_genome_fitness(evaluation_keys[i], genome, X, y)
             fitness_scores.append(genome.fitness)
-            # Update global innovation state from evaluations (in case new conn/nodes added implicitly?) - shouldn't happen here
             innovation_tracker['global_innovation_number'] = max(innovation_tracker['global_innovation_number'], genome.global_innovation_number)
             innovation_tracker['innovation_history'].update(genome.innovation_history)
 
-
-        # Sort population by fitness (descending)
         population.sort(key=lambda g: g.fitness, reverse=True)
 
         best_gen_genome = population[0]
@@ -903,46 +734,36 @@ def run_neat_evolution(key, config, task_name='XOR', generations=100):
 
         if best_gen_fitness > best_fitness_overall:
             best_fitness_overall = best_gen_fitness
-            # Deep copy the best genome to store it independently
             best_genome_overall = copy.deepcopy(best_gen_genome)
             print(f"*** Gen {gen+1}: New best! Fitness: {best_fitness_overall:.4f} (Avg: {avg_gen_fitness:.4f}) ***")
         else:
              print(f"Gen {gen+1}: Best Fitness={best_gen_fitness:.4f} (Avg: {avg_gen_fitness:.4f}) (Overall Best: {best_fitness_overall:.4f})")
 
-
-        # --- Reproduction ---
-        # Simple Elitism + Selection + Crossover + Mutation
         next_population = []
 
-        # Elitism
         for i in range(min(elitism, population_size)):
              next_population.append(population[i])
 
-        # Generate offspring
         num_offspring = population_size - len(next_population)
-        parent_pool = population[:max(elitism, int(population_size * 0.5))] # Select parents from top half
+        parent_pool = population[:max(elitism, int(population_size * 0.5))]
 
-        child_keys = jax.random.split(repro_key, num_offspring) # Use JAX keys for potential future stochasticity
-        child_id_start = population_size # Assign new keys/IDs to children
+        child_keys = jax.random.split(repro_key, num_offspring)
+        child_id_start = population_size
 
         for i in range(num_offspring):
-            # Select parents (simple random choice from pool)
             parent1 = random.choice(parent_pool)
             parent2 = random.choice(parent_pool)
 
             # Crossover
-            child_key = child_id_start + i # Assign a new unique key
-            child = Genome.crossover(parent1, parent2, child_key, innovation_tracker) # Pass tracker!
+            child_key = child_id_start + i
+            child = Genome.crossover(parent1, parent2, child_key, innovation_tracker)
 
             # Mutation
             child.mutate()
-
-            # Update innovation state from child (important after crossover/mutate)
             innovation_tracker['global_innovation_number'] = child.global_innovation_number
             innovation_tracker['innovation_history'] = child.innovation_history
 
             next_population.append(child)
-
 
         population = next_population
 
@@ -952,62 +773,39 @@ def run_neat_evolution(key, config, task_name='XOR', generations=100):
     else:
         print("No suitable genome found.")
 
-    return best_genome_overall, X, y # Return data as well for convenience
+    return best_genome_overall, X, y
 
 
-# --- Main Execution ---
 if __name__ == "__main__":
-    # Ensure JAX uses GPU if available
-    print("JAX Devices Available:", jax.devices())
-
-    master_key = jax.random.PRNGKey(int(time.time())) # Use time-based seed
-
-    # --- Select Task ---
+    master_key = jax.random.PRNGKey(int(time.time()))
     task_name = 'InterlockingSpirals' # XOR, Circles, Spiral, Checkerboard, GaussianQuantiles, InterlockingSpirals
     generations = 50  # Number of generations
-    config = default_config.copy() # Start with defaults
+    config = default_config.copy()
     config['pop_size'] = 100
 
-    # --- Run Evolution ---
     print(f"\n--- Running Task: {task_name} ---")
     key, task_key, retrain_key = jax.random.split(master_key, 3)
 
-    best_genome, X, y = run_neat_evolution(task_key,
-                                     config=config,
-                                     task_name=task_name,
-                                     generations=generations)
+    best_genome, X, y = main(task_key, config=config, task_name=task_name, generations=generations)
 
-    # --- Visualize Best Genome ---
     if best_genome:
         print(f"\n--- Visualizing Best Genome for {task_name} ---")
 
-        # 1. Visualize Network Structure
         visualize_network(best_genome, title=f"Best Evolved Network for {task_name}")
         plt.show()
 
-        # 2. Retrain the best network more thoroughly for a better boundary plot
-        try:
-            apply_fn, initial_params = genome_to_forward_fn(best_genome)
+        apply_fn, initial_params = genome_to_forward_fn(best_genome)
 
-            if not initial_params.get('weights') and not initial_params.get('biases'):
-                 print("Best genome has no trainable parameters, cannot visualize boundary.")
-            else:
-                print("Retraining best genome for visualization...")
-                # Use slightly different config for final training if needed
-                retrain_config = config.copy()
-                retrain_config['bp_epochs'] = 300 # More epochs for final train
-                trained_params, final_loss, final_accuracy = train_network(
-                    retrain_key, apply_fn, initial_params, X, y, retrain_config
-                )
-                print(f"Retrained Accuracy for {task_name}: {final_accuracy:.4f}")
-
-                # 3. Visualize Decision Boundary
-                plot_decision_boundary(apply_fn, trained_params, X, y,
-                                       title=f"{task_name} Classification\nFinal Accuracy: {final_accuracy:.2%}")
-                plt.show()
-
-        except Exception as e:
-            import traceback
-            print(f"Error during final visualization/retraining for {task_name}: {e}\n{traceback.format_exc()}")
-
-    print("\n--- Script Finished ---")
+        if not initial_params.get('weights') and not initial_params.get('biases'):
+            print("Best genome has no trainable parameters, cannot visualize boundary.")
+        else:
+            print("Retraining best genome for visualization...")
+            retrain_config = config.copy()
+            retrain_config['bp_epochs'] = 300
+            trained_params, final_loss, final_accuracy = train_network(
+                retrain_key, apply_fn, initial_params, X, y, retrain_config
+            )
+            print(f"Retrained Accuracy for {task_name}: {final_accuracy:.4f}")
+            plot_decision_boundary(apply_fn, trained_params, X, y,
+                                   title=f"{task_name} Classification\nFinal Accuracy: {final_accuracy:.2%}")
+            plt.show()

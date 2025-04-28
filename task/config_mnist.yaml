@@ -21,7 +21,7 @@ training:
 network:
   num_output: 10
   num_layers: [1]
-  num_inputs: 784 #MNIST is 28 * 28 images
+  num_inputs: 784
 
 dataset:
   dataset_type: "mnist"

@@ -1,6 +1,9 @@
 # version that later on fixed some memory leak with boxed according to github forums (but needed gym 0.10.x).
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import sys, math
+import math
 import numpy as np
 
 import Box2D

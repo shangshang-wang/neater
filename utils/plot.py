@@ -1,6 +1,7 @@
-"""
-Laconic plot functions to replace some of the matplotlibs verbosity
-"""
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from matplotlib import pyplot as plt
 import numpy as np
 import seaborn as sns

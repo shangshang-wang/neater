@@ -1,12 +1,15 @@
-import logging
-import math
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import cv2
 import gym
 from gym import spaces
 from gym.utils import seeding
-import numpy as np
-import sys
-import cv2
+import logging
 import math
+import numpy as np
+
 
 class ClassifyEnv(gym.Env):
   """Classification as an unsupervised OpenAI Gym RL problem.

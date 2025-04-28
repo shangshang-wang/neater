@@ -7,6 +7,9 @@ Reward is also reshaped to be similar to PyBullet/roboschool version
 
 More difficult, since dt is 0.05 (not 0.01), and only 200 timesteps
 """
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import logging
 import math
@@ -14,6 +17,7 @@ import gym
 from gym import spaces
 from gym.utils import seeding
 import numpy as np
+
 
 logger = logging.getLogger(__name__)
 

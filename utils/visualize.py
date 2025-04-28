@@ -1,8 +1,11 @@
-import warnings
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import graphviz
 import matplotlib.pyplot as plt
 import numpy as np
+import warnings
 
 
 def plot_stats(statistics, ylog=False, view=False, filename='avg_fitness.svg'):

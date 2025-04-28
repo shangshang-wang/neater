@@ -1,8 +1,12 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import glob
-import warnings
-import numpy as np
 from matplotlib import pyplot as plt
 import networkx as nx
+import numpy as np
+import warnings
 
 from task import *
 from task.task_config import games

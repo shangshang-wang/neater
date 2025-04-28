@@ -1,21 +1,22 @@
-import multiprocessing
 import os
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
+import gym.wrappers
+import slimevolleygym
+
+import matplotlib.pyplot as plt
+import multiprocessing
+import neat
+import numpy as np
 import pickle
 import random
 import time
 
-import gym.wrappers
-import matplotlib.pyplot as plt
-import numpy as np
-import slimevolleygym
-
-import neat
 import utils.visualize as visualize
 
-NUM_CORES = multiprocessing.cpu_count()
 
+NUM_CORES = multiprocessing.cpu_count()
 env = gym.make('SlimeVolley-v0')
 
 
@@ -25,7 +26,6 @@ class SlimeGenome(neat.DefaultGenome):
 
     def __str__(self):
         return f"Slime:\n{super().__str__()}"
-
 
 class PooledErrorCompute(object):
     def __init__(self, num_workers):
@@ -64,8 +64,6 @@ class PooledErrorCompute(object):
         print("network creation time {0}".format(time.time() - t0))
         t0 = time.time()
 
-        # Assign a composite fitness to each genome; genomes can make progress either
-        # by improving their total reward or by making more accurate reward estimates.
         print("Evaluating {0} test episodes".format(self.test_episodes))
         if self.num_workers < 2:
             for genome, net in nets:
@@ -85,9 +83,7 @@ class PooledErrorCompute(object):
         print("final fitness compute time {0}\n".format(time.time() - t0))
 
 
-def run():
-    # Load the config file, which is assumed to live in
-    # the same directory as this script.
+def main():
     config_path = os.path.join("task", 'config_slime')
     config = neat.Config(SlimeGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
@@ -97,18 +93,12 @@ def run():
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
     pop.add_reporter(neat.StdOutReporter(True))
-    # Checkpoint every 25 generations or 900 seconds.
     pop.add_reporter(neat.Checkpointer(100, None))
 
-    # Run until the winner from a generation is able to solve the environment
-    # or the user interrupts the process.
     ec = PooledErrorCompute(NUM_CORES)
     while 1:
         try:
             gen_best = pop.run(ec.evaluate_genomes, 5)
-
-            # print(gen_best)
-
             visualize.plot_stats(stats, ylog=False, view=False, filename="fitness.svg")
 
             mfs = sum(stats.get_fitness_mean()[-5:]) / 5.0
@@ -117,7 +107,6 @@ def run():
             mfs = sum(stats.get_fitness_stat(min)[-5:]) / 5.0
             print("Average min fitness over last 5 generations: {0}".format(mfs))
 
-            # Use the best genomes seen so far as an ensemble-ish control system.
             best_genomes = stats.best_unique_genomes(1)[0]
             best_networks = neat.nn.FeedForwardNetwork.create(best_genomes, config)
 
@@ -145,7 +134,6 @@ def run():
             if solved:
                 print("Solved.")
 
-                # Save the winners.
                 for n, g in enumerate(best_genomes):
                     name = 'winner-{0}'.format(n)
                     with open(name + '.pickle', 'wb') as f:
@@ -163,4 +151,4 @@ def run():
 
 
 if __name__ == '__main__':
-    run()
+    main()

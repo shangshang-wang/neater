@@ -1,3 +1,11 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
+import multiprocessing as mp
+mp.set_start_method('spawn')
+
+import argparse
 from functools import partial
 import gym.wrappers
 import jax
@@ -6,7 +14,6 @@ from jax import grad, jit, vmap, value_and_grad
 from jax import device_get, device_put
 from jax.lax import stop_gradient
 import matplotlib.pyplot as plt
-import multiprocessing as mp
 import neat
 from neat.graphs import feed_forward_layers
 from neat.attributes import StringAttribute, BoolAttribute
@@ -19,10 +26,101 @@ import visualize
 
 from task import make_env
 
+
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 # os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']='.05'
 
 NUM_CORES = mp.cpu_count()
+
+
+def sum_agg(x):
+    return jnp.sum(x, axis=1)
+
+def product_agg(x):
+    return jnp.prod(x, axis=1)
+
+def max_agg(x):
+    return jnp.max(x, axis=1)
+
+def min_agg(x):
+    return jnp.min(x, axis=1)
+
+def mean_agg(x):
+    return jnp.mean(x, axis=1)
+
+def median_agg(x):
+    return jnp.median(x, axis=1)
+
+def sigmoid(x):
+    return (jnp.tanh(x / 2.0) + 1.0) / 2.0
+
+def sin(x):
+    return jnp.sin(x)
+
+def cos(x):
+    return jnp.cos(x)
+
+def tanh(x):
+    return jnp.tanh(x)
+
+def relu(x):
+    return jnp.maximum(0, x)
+
+def gauss(x):
+    return jnp.exp(-jnp.multiply(x, x) / 2.0)
+
+def abs(x):
+    return jnp.abs(x)
+
+def identity(x):
+    return x
+
+def clamped(x):
+    return jnp.clip(x, -1, 1)
+
+def inv(x):
+    return 1 / x if x != 0 else x
+
+def log(x):
+    return jnp.log(jnp.maximum(x, 1e-7))
+
+def exp(x):
+    return jnp.exp(jnp.clip(x, -60, 60))
+
+def hat(x):
+    return jnp.maximum(0, 1 - jnp.abs(x))
+
+def square(x):
+    return jnp.square(x)
+
+def cube(x):
+    return jnp.power(x, 3)
+
+def prod(dic1, dic2):
+    return {k: {k1: dic1[k][k1] * dic2[k][k1] for k1 in dic1[k]} for k in dic1} \
+        if isinstance(dic2, dict) else {k: {k1: dic1[k][k1] * dic2 for k1 in dic1[k]} for k in dic1}
+
+def sum(dic1, dic2):
+    return {k: {k1: dic1[k][k1] + dic2[k][k1] for k1 in dic1[k]} for k in dic1} \
+        if isinstance(dic2, dict) else {k: {k1: dic1[k][k1] + dic2 for k1 in dic1[k]} for k in dic1}
+
+def div(dic1, dic2):
+    return {k: {k1: dic1[k][k1] / dic2[k][k1] for k1 in dic1[k]} for k in dic1}
+
+def sub(dic1, dic2):
+    return {k: {k1: dic1[k][k1] - dic2[k][k1] for k1 in dic1[k]} for k in dic1}
+
+def sqr(dic):
+    return {k: {k1: jnp.square(dic[k][k1]) for k1 in dic[k]} for k in dic}
+
+def sqrt(dic):
+    return {k: {k1: jnp.sqrt(dic[k][k1]) for k1 in dic[k]} for k in dic}
+
+def jnp2np(dic):
+    return {k: {k1: np.float32(dic[k][k1]) for k1 in dic[k]} for k in dic}
+
+def jnp2float(dic):
+    return {k: {k1: float(dic[k][k1]) for k1 in dic[k]} for k in dic}
 
 
 class NumpyAttribute(neat.attributes.BaseAttribute):
@@ -58,8 +156,6 @@ class NumpyAttribute(neat.attributes.BaseAttribute):
         raise RuntimeError(f"Unknown init_type {getattr(config, self.init_type_name)!r} for {self.init_type_name!s}")
 
     def mutate_value(self, value, config):
-        # mutate_rate is usually no lower than replace_rate, and frequently higher -
-        # so put first for efficiency
         mutate_rate = getattr(config, self.mutate_rate_name)
 
         r = np.random.rand()
@@ -80,7 +176,6 @@ class NumpyAttribute(neat.attributes.BaseAttribute):
         if max_value < min_value:
             raise RuntimeError("Invalid min/max configuration for {self.name}")
 
-
 class BackpropNodeGene(neat.genes.DefaultNodeGene):
     _gene_attributes = [NumpyAttribute('bias'),
                         NumpyAttribute('response'),
@@ -90,14 +185,12 @@ class BackpropNodeGene(neat.genes.DefaultNodeGene):
     def __init__(self, key):
         super().__init__(key)
 
-
 class BackpropConnectionGene(neat.genes.DefaultConnectionGene):
     _gene_attributes = [NumpyAttribute('weight'),
                         BoolAttribute('enabled')]
 
     def __init__(self, key):
         super().__init__(key)
-
 
 class BackpropGenome(neat.DefaultGenome):
 
@@ -131,97 +224,12 @@ class BackpropGenome(neat.DefaultGenome):
             'cube': cube,
         }
 
-
-def sum_agg(x):
-    return jnp.sum(x, axis=1)
-
-
-def product_agg(x):
-    return jnp.prod(x, axis=1)
-
-
-def max_agg(x):
-    return jnp.max(x, axis=1)
-
-
-def min_agg(x):
-    return jnp.min(x, axis=1)
-
-
-def mean_agg(x):
-    return jnp.mean(x, axis=1)
-
-
-def median_agg(x):
-    return jnp.median(x, axis=1)
-
-
-def sigmoid(x):
-    return (jnp.tanh(x / 2.0) + 1.0) / 2.0
-
-
-def sin(x):
-    return jnp.sin(x)
-
-
-def cos(x):
-    return jnp.cos(x)
-
-
-def tanh(x):
-    return jnp.tanh(x)
-
-
-def relu(x):
-    return jnp.maximum(0, x)
-
-
-def gauss(x):
-    return jnp.exp(-jnp.multiply(x, x) / 2.0)
-
-
-def abs(x):
-    return jnp.abs(x)
-
-
-def identity(x):
-    return x
-
-
-def clamped(x):
-    return jnp.clip(x, -1, 1)
-
-
-def inv(x):
-    return 1 / x if x != 0 else x
-
-
-def log(x):
-    return jnp.log(jnp.maximum(x, 1e-7))
-
-
-def exp(x):
-    return jnp.exp(jnp.clip(x, -60, 60))
-
-
-def hat(x):
-    return jnp.maximum(0, 1 - jnp.abs(x))
-
-
-def square(x):
-    return jnp.square(x)
-
-
-def cube(x):
-    return jnp.power(x, 3)
-
-
 class GymClassificationTask():
 
     def __init__(self,
                  game: str = 'BackpropXOR',  # 'BackpropSprial', 'BackpropGaussian', 'BackpropCircle'
-                 num_trails: int = 1,  # epochs
-                 num_workers: int = 1,  # number of workers
+                 num_trails: int = 1,
+                 num_workers: int = 1,
                  ):
         self.game = game
         self.num_trials = num_trails
@@ -283,15 +291,11 @@ class GymClassificationTask():
                 f"Incorrect number of input nodes (Expected {len(input_nodes)}, got {inputs.shape[1]})."
 
             values = {key: jnp.zeros(inputs.shape[0]) for key in input_nodes + output_nodes}
-            # values = {key: 0 for key in input_nodes + output_nodes}
             for i in range(inputs.shape[1]):
                 values[input_nodes[i]] = inputs[:, i]
 
             for node, links in adj_list:
-                # TODO why is this not work for mp
-                # node_inputs = jnp.zeros((inputs.shape[0], len(links)))
                 node_inputs = jnp.empty((batch, len(links)))
-                # node_inputs = [None for _ in range(len(links))]
                 for idx, (i, o) in enumerate(links):
                     ng = genome.nodes[o]
                     try:
@@ -318,7 +322,7 @@ class GymClassificationTask():
             w = params['weights']
             b = params['biases']
             r = params['responses']
-            outputs = forward(w, b, r, inputs, batch, adj_list, genome, config)  # DEBUG
+            outputs = forward(w, b, r, inputs, batch, adj_list, genome, config)
             logit = jax.nn.sigmoid(outputs).reshape(-1, 1)
             logit = jnp.clip(logit, 1e-7, 1 - 1e-7)
             loss = -jnp.mean(targets * jnp.log(logit) + (1 - targets) * jnp.log(1 - logit))
@@ -353,41 +357,6 @@ class GymClassificationTask():
                 break
         return float(fitness)
 
-
-def prod(dic1, dic2):
-    return {k: {k1: dic1[k][k1] * dic2[k][k1] for k1 in dic1[k]} for k in dic1} \
-        if isinstance(dic2, dict) else {k: {k1: dic1[k][k1] * dic2 for k1 in dic1[k]} for k in dic1}
-
-
-def sum(dic1, dic2):
-    return {k: {k1: dic1[k][k1] + dic2[k][k1] for k1 in dic1[k]} for k in dic1} \
-        if isinstance(dic2, dict) else {k: {k1: dic1[k][k1] + dic2 for k1 in dic1[k]} for k in dic1}
-
-
-def div(dic1, dic2):
-    return {k: {k1: dic1[k][k1] / dic2[k][k1] for k1 in dic1[k]} for k in dic1}
-
-
-def sub(dic1, dic2):
-    return {k: {k1: dic1[k][k1] - dic2[k][k1] for k1 in dic1[k]} for k in dic1}
-
-
-def sqr(dic):
-    return {k: {k1: jnp.square(dic[k][k1]) for k1 in dic[k]} for k in dic}
-
-
-def sqrt(dic):
-    return {k: {k1: jnp.sqrt(dic[k][k1]) for k1 in dic[k]} for k in dic}
-
-
-def jnp2np(dic):
-    return {k: {k1: np.float32(dic[k][k1]) for k1 in dic[k]} for k in dic}
-
-
-def jnp2float(dic):
-    return {k: {k1: float(dic[k][k1]) for k1 in dic[k]} for k in dic}
-
-
 class FeedForwardNetwork(object):
 
     def __init__(self):
@@ -395,7 +364,6 @@ class FeedForwardNetwork(object):
 
     @staticmethod
     def create(genome, config):
-        # Gather expressed connections.
         connections = [cg.key for cg in genome.connections.values() if cg.enabled]
         layers = feed_forward_layers(config.genome_config.input_keys, config.genome_config.output_keys, connections)
 
@@ -467,7 +435,7 @@ class FeedForwardNetwork(object):
         return outputs
 
 
-def run(args):
+def main(args):
     config_path = os.path.join("task", 'config_backprop')
     config = neat.Config(BackpropGenome, neat.DefaultReproduction,
                           neat.DefaultSpeciesSet, neat.DefaultStagnation,
@@ -477,14 +445,9 @@ def run(args):
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
     pop.add_reporter(neat.StdOutReporter(True))
-    # Checkpoint every 25 generations or 900 seconds.
     pop.add_reporter(neat.Checkpointer(25, None, os.path.join(args.output_dir, 'checkpoint-')))
 
-    # Run until the winner from a generation is able to solve the environment
-    # or the user interrupts the process.
-    ec = GymClassificationTask('BackpropXOR', 30, args.num_worker)
-    # ec = GymClassificationTask('BackpropCircle', 30, args.num_worker)
-    # ec = GymClassificationTask('BackpropSpiral', 30, args.num_worker)
+    ec = GymClassificationTask(args.task, 30, args.num_worker)
     while 1:
         try:
             gen_best = pop.run(ec.evaluate_genomes, 5)
@@ -499,7 +462,6 @@ def run(args):
             mfs = sum(stats.get_fitness_stat(min)[-5:]) / 5.0
             print("Average min fitness over last 5 generations: {0}".format(mfs))
 
-            # Use the best genomes seen so far as an ensemble-ish control system.
             best_genome = stats.best_unique_genomes(1)[0]
             adj_list, weights, biases, responses = FeedForwardNetwork.create(best_genome, config)
 
@@ -532,8 +494,7 @@ def run(args):
             if solved:
                 print("Solved.")
 
-                # Save the winners.
-                os.mkdir('./backprop_results', exist_ok=True)
+                os.mkdir(args.result_dir, exist_ok=True)
                 name = 'winner'
                 with open(name + '.pickle', 'wb') as f:
                     pickle.dump(best_genome, f)
@@ -546,22 +507,22 @@ def run(args):
             print("User break.")
             break
 
-    # ec.env.close()
+    ec.env.close()
 
 
 if __name__ == '__main__':
-    mp.set_start_method('spawn')  # or 'forkserver'
-
-    import argparse
-
-    parser = argparse.ArgumentParser(description=('Evolve NEAT networks'))
-
-    parser.add_argument('-n', '--num_worker', type=int, \
-                        help='number of cores to use', default=8)
-
-    parser.add_argument('-o', '--output_dir', type=str, \
-                        default='', help='output directory')
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--num_worker', type=int, default=8)
+    parser.add_argument('-o', '--output_dir', type=str, default='./assets/outputs/open_source')
+    parser.add_argument('-res', '--result_dir', type=str, default='./assets/results/open_source')
+    parser.add_argument('-t', '--task', type=str, default='BackpropXOR') # BackpropCircle, BackpropSpiral
     args = parser.parse_args()
 
-    run(args)
+    main(args)
+
+    ## View the plots
+    # from utils.visualize_net import view_classifier
+    # dir = "assets/results/open_source"
+    # view_classifier(f'{dir}/XOR_best.out',f'{dir}/backprop_XOR')
+    # view_classifier(f'{dir}/circle_best.out', f'{dir}/backprop_circle')
+    # view_classifier(f'{dir}/spiral_best.out', f'{dir}/backprop_spiral')
